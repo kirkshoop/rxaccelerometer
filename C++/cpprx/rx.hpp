@@ -295,13 +295,13 @@ namespace detail {
             return from(ObserveOnObserver<item_type>(obj, std::move(scheduler)));
         }
 #if RXCPP_USE_WINRT
-		auto observe_on_dispatcher()
-			-> decltype(from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current()))))
-		{
-			return		from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current())));
-		}
+        auto observe_on_dispatcher()
+            -> decltype(from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current()))))
+        {
+            return		from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current())));
+        }
 #else
-		auto on_dispatcher()
+        auto on_dispatcher()
         -> decltype(from(ObserveOnDispatcher<item_type>(obj)))
         {
             return from(ObserveOnDispatcher<item_type>(obj));

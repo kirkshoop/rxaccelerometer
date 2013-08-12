@@ -30,7 +30,7 @@ MainPage^ MainPage::Current = nullptr;
 
 MainPage::~MainPage()
 {
-	cd.Dispose();
+    cd.Dispose();
 }
 
 MainPage::MainPage()
@@ -46,54 +46,52 @@ MainPage::MainPage()
 
     FeatureName->Text = FEATURE_NAME;
 
-	auto sizeChanged = rxrt::FromEventPattern<SizeChangedEventHandler, SizeChangedEventArgs>(
-		this,
-		[](MainPage^ that, SizeChangedEventHandler^ h) 
-		{
-			return that->SizeChanged += h;
-		},
-		[](MainPage^ that, Windows::Foundation::EventRegistrationToken t)
-		{
-			that->SizeChanged -= t;
-		}
-	);
+    auto sizeChanged = rxrt::FromEventPattern<SizeChangedEventHandler, SizeChangedEventArgs>(
+        [this](SizeChangedEventHandler^ h) 
+        {
+            return this->SizeChanged += h;
+        },
+        [this](Windows::Foundation::EventRegistrationToken t)
+        {
+            this->SizeChanged -= t;
+        }
+    );
 
-	cd.Add(rx::from(sizeChanged)
-		.subscribe(
-			[this](const rxrt::EventPattern<Platform::Object^, SizeChangedEventArgs^>&){
-				/// We need to handle SizeChanged so that we can make the sample layout property
-				/// in the various layouts.
-				this->InvalidateSize();
-				MainPageSizeChangedEventArgs^ args = ref new MainPageSizeChangedEventArgs();
-				args->Width = this->ActualWidth;
-				this->MainPageResized(this, args);
-			})
-	);
+    auto selectionChanged = rxrt::FromEventPattern<SelectionChangedEventHandler, MainPage, SelectionChangedEventArgs>(
+        [this](SelectionChangedEventHandler^ h)
+        {
+            return this->Scenarios->SelectionChanged += h;
+        },
+        [this](Windows::Foundation::EventRegistrationToken t)
+        {
+            this->Scenarios->SelectionChanged -= t;
+        }
+    );
 
-	auto selectionChanged = rxrt::FromEventPattern<SelectionChangedEventHandler, MainPage, SelectionChangedEventArgs>(
-		this,
-		[](MainPage^ that, SelectionChangedEventHandler^ h)
-		{
-			return that->Scenarios->SelectionChanged += h;
-		},
-		[](MainPage^ that, Windows::Foundation::EventRegistrationToken t)
-		{
-			that->Scenarios->SelectionChanged -= t;
-		}
-	);
+    cd.Add(rx::from(sizeChanged)
+        .subscribe(
+            [this](const rxrt::EventPattern<Platform::Object^, SizeChangedEventArgs^>&){
+                /// We need to handle SizeChanged so that we can make the sample layout property
+                /// in the various layouts.
+                this->InvalidateSize();
+                MainPageSizeChangedEventArgs^ args = ref new MainPageSizeChangedEventArgs();
+                args->Width = this->ActualWidth;
+                this->MainPageResized(this, args);
+            })
+    );
 
-	cd.Add(rx::from(selectionChanged)
-		.subscribe(
-			[this](const rxrt::EventPattern<MainPage^, SelectionChangedEventArgs^>&){
-				if (this->Scenarios->SelectedItem != nullptr)
-				{
-					this->NotifyUser("", NotifyType::StatusMessage);
+    cd.Add(rx::from(selectionChanged)
+        .subscribe(
+            [this](const rxrt::EventPattern<MainPage^, SelectionChangedEventArgs^>&){
+                if (this->Scenarios->SelectedItem != nullptr)
+                {
+                    this->NotifyUser("", NotifyType::StatusMessage);
 
-					this->LoadScenario((safe_cast<ListBoxItem^>(this->Scenarios->SelectedItem))->Name);
-					this->InvalidateSize();
-				}
-			})
-	);
+                    this->LoadScenario((safe_cast<ListBoxItem^>(this->Scenarios->SelectedItem))->Name);
+                    this->InvalidateSize();
+                }
+            })
+    );
 
     MainPage::Current = this;
 }
