@@ -40,12 +40,11 @@ namespace SDKSample
             MainPage^ rootPage;
             Windows::UI::Core::CoreDispatcher^ dispatcher;
             Windows::Devices::Sensors::Accelerometer^ accelerometer;
-            Windows::Foundation::EventRegistrationToken visibilityToken;
+            rx::Disposable visibilitySubscription;
+            rx::Disposable dispatchIntervalSubscription;
+            //Windows::Foundation::EventRegistrationToken visibilityToken;
             uint32 desiredReportInterval;
-            Windows::UI::Xaml::DispatcherTimer^ dispatcherTimer;
 
-            void VisibilityChanged(Platform::Object^ sender, Windows::UI::Core::VisibilityChangedEventArgs^ e);
-            void DisplayCurrentReading(Platform::Object^ sender, Platform::Object^ e);
             void ScenarioEnable(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
             void ScenarioDisable(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
         };

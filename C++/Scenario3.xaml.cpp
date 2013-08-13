@@ -26,7 +26,11 @@ using namespace Windows::Foundation;
 using namespace Windows::UI::Core;
 using namespace Platform;
 
-Scenario3::Scenario3() : rootPage(MainPage::Current), desiredReportInterval(0)
+Scenario3::Scenario3() : 
+    rootPage(MainPage::Current), 
+    desiredReportInterval(0),
+    dispatchIntervalSubscription(rx::Disposable::Empty()),
+    visibilitySubscription(rx::Disposable::Empty())
 {
     InitializeComponent();
 
@@ -37,13 +41,6 @@ Scenario3::Scenario3() : rootPage(MainPage::Current), desiredReportInterval(0)
         // This value will be used later to activate the sensor.
         uint32 minReportInterval = accelerometer->MinimumReportInterval;
         desiredReportInterval = minReportInterval > 16 ? minReportInterval : 16;
-
-        // Set up a DispatchTimer
-        TimeSpan span;
-        span.Duration = static_cast<int32>(desiredReportInterval) * 10000;   // convert to 100ns ticks
-        dispatcherTimer = ref new DispatcherTimer();
-        dispatcherTimer->Interval = span;
-        dispatcherTimer->Tick += ref new Windows::Foundation::EventHandler<Object^>(this, &Scenario3::DisplayCurrentReading);
     }
     else
     {
@@ -70,48 +67,12 @@ void Scenario3::OnNavigatedFrom(NavigationEventArgs^ e)
 {
     if (ScenarioDisableButton->IsEnabled)
     {
-        Window::Current->VisibilityChanged::remove(visibilityToken);
-        dispatcherTimer->Stop();
+        visibilitySubscription.Dispose();
+        dispatchIntervalSubscription.Dispose();
+        //Window::Current->VisibilityChanged::remove(visibilityToken);
 
         // Restore the default report interval to release resources while the sensor is not in use
         accelerometer->ReportInterval = 0;
-    }
-}
-
-/// <summary>
-/// This is the event handler for VisibilityChanged events. You would register for these notifications
-/// if handling sensor data when the app is not visible could cause unintended actions in the app.
-/// </summary>
-/// <param name="sender"></param>
-/// <param name="e">
-/// Event data that can be examined for the current visibility state.
-/// </param>
-void Scenario3::VisibilityChanged(Object^ sender, VisibilityChangedEventArgs^ e)
-{
-    // The app should watch for VisibilityChanged events to disable and re-enable sensor input as appropriate
-    if (ScenarioDisableButton->IsEnabled)
-    {
-        if (e->Visible)
-        {
-            // Re-enable sensor input (no need to restore the desired reportInterval... it is restored for us upon app resume)
-            dispatcherTimer->Start();
-        }
-        else
-        {
-            // Disable sensor input (no need to restore the default reportInterval... resources will be released upon app suspension)
-            dispatcherTimer->Stop();
-        }
-    }
-}
-
-void Scenario3::DisplayCurrentReading(Object^ sender, Object^ e)
-{
-    AccelerometerReading^ reading = accelerometer->GetCurrentReading();
-    if (reading != nullptr)
-    {
-        ScenarioOutput_X->Text = reading->AccelerationX.ToString();
-        ScenarioOutput_Y->Text = reading->AccelerationY.ToString();
-        ScenarioOutput_Z->Text = reading->AccelerationZ.ToString();
     }
 }
 
@@ -119,12 +80,67 @@ void Scenario3::ScenarioEnable(Platform::Object^ sender, Windows::UI::Xaml::Rout
 {
     if (accelerometer != nullptr)
     {
-        visibilityToken = Window::Current->VisibilityChanged::add(ref new WindowVisibilityChangedEventHandler(this, &Scenario3::VisibilityChanged));
+        auto dispatcherInterval = rxrt::DispatcherInterval(std::chrono::milliseconds(desiredReportInterval));
+
+        auto currentWindow = Window::Current;
+        auto visibilityChanged = rxrt::FromEventPattern<WindowVisibilityChangedEventHandler, VisibilityChangedEventArgs>(
+            [currentWindow](WindowVisibilityChangedEventHandler^ h)
+            {
+                return currentWindow->VisibilityChanged += h;
+            },
+            [currentWindow](Windows::Foundation::EventRegistrationToken t)
+            {
+                currentWindow->VisibilityChanged -= t;
+            });
+
+        ///
+        /// allow subscription to be called from multiple points
+        ///
+        auto subscribeDispatchInterval =
+            [this, dispatcherInterval]()
+        {
+            this->dispatchIntervalSubscription.Dispose();
+            this->dispatchIntervalSubscription = rx::from(dispatcherInterval)
+                .subscribe([this](size_t)
+                {
+                    // on the ui thread
+                    AccelerometerReading^ reading = this->accelerometer->GetCurrentReading();
+                    if (reading != nullptr)
+                    {
+                        this->ScenarioOutput_X->Text = reading->AccelerationX.ToString();
+                        this->ScenarioOutput_Y->Text = reading->AccelerationY.ToString();
+                        this->ScenarioOutput_Z->Text = reading->AccelerationZ.ToString();
+                    }
+                });
+        };
+        // initial subscribe
+        subscribeDispatchInterval();
+
+        /// This is the event handler for VisibilityChanged events. You would register for these notifications
+        /// if handling sensor data when the app is not visible could cause unintended actions in the app.
+        this->visibilitySubscription = rx::from(visibilityChanged)
+            .subscribe(
+            [this, subscribeDispatchInterval](rxrt::EventPattern<Platform::Object^, VisibilityChangedEventArgs^> e)
+            {
+                // The app should watch for VisibilityChanged events to disable and re-enable sensor input as appropriate
+                if (ScenarioDisableButton->IsEnabled)
+                {
+                    if (e.EventArgs()->Visible)
+                    {
+                        // Re-enable sensor input (no need to restore the desired reportInterval... it is restored for us upon app resume)
+                        subscribeDispatchInterval();
+                    }
+                    else
+                    {
+                        // Disable sensor input (no need to restore the default reportInterval... resources will be released upon app suspension)
+                        this->dispatchIntervalSubscription.Dispose();
+                    }
+                }
+            });
+        //visibilityToken = Window::Current->VisibilityChanged::add(ref new WindowVisibilityChangedEventHandler(this, &Scenario3::VisibilityChanged));
 
         // Set the report interval to enable the sensor for polling
         accelerometer->ReportInterval = desiredReportInterval;
-
-        dispatcherTimer->Start();
 
         ScenarioEnableButton->IsEnabled = false;
         ScenarioDisableButton->IsEnabled = true;
@@ -137,9 +153,9 @@ void Scenario3::ScenarioEnable(Platform::Object^ sender, Windows::UI::Xaml::Rout
 
 void Scenario3::ScenarioDisable(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e)
 {
-    Window::Current->VisibilityChanged::remove(visibilityToken);
-
-    dispatcherTimer->Stop();
+    dispatchIntervalSubscription.Dispose();
+    visibilitySubscription.Dispose();
+    //Window::Current->VisibilityChanged::remove(visibilityToken);
 
     // Restore the default report interval to release resources while the sensor is not in use
     accelerometer->ReportInterval = 0;
