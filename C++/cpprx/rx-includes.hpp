@@ -83,8 +83,8 @@
 #include "rx-base.hpp"
 #include "rx-scheduler.hpp"
 #include "rx-windows.hpp"
-#include "rx-winrt.hpp"
 #include "rx-operators.hpp"
+#include "rx-winrt.hpp"
 
 #pragma pop_macro("min")
 #pragma pop_macro("max")

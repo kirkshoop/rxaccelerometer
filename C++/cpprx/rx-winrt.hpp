@@ -153,6 +153,53 @@ namespace rxcpp { namespace winrt {
         });
     }
 
+    std::shared_ptr < Observable < size_t> >
+    inline DispatcherInterval(
+        Scheduler::clock::duration interval)
+    {
+        return CreateObservable<size_t>(
+            [=](std::shared_ptr < Observer < size_t >> observer)
+            -> Disposable
+        {
+            size_t cursor = 0;
+            ComposableDisposable cd;
+
+            wf::TimeSpan timeSpan;
+            // convert to 100ns ticks
+            timeSpan.Duration = static_cast<int32>(std::chrono::duration_cast<std::chrono::nanoseconds>(interval).count() / 100);
+
+            auto dispatcherTimer = ref new wuixaml::DispatcherTimer();
+            dispatcherTimer->Interval = timeSpan;
+
+            cd.Add(Subscribe(FromEventPattern<wf::EventHandler<Platform::Object^>, Platform::Object>(
+                [dispatcherTimer](wf::EventHandler<Platform::Object^>^ h) {
+                    return dispatcherTimer->Tick += h; },
+                [dispatcherTimer](wf::EventRegistrationToken t) {
+                    dispatcherTimer->Tick -= t; 
+                }),
+                [observer, cursor](EventPattern<Platform::Object^, Platform::Object^>) mutable {
+                    observer->OnNext(cursor);
+                    ++cursor;
+                },
+                [observer]() {
+                    observer->OnCompleted();
+                },
+                [observer](std::exception_ptr e) {
+                    observer->OnError(e);
+                }));
+
+            cd.Add(Disposable(
+                [observer, dispatcherTimer](){
+                    dispatcherTimer->Stop();
+                    observer->OnCompleted();
+                }));
+
+            dispatcherTimer->Start();
+
+            return cd;
+        });
+    }
+
     struct CoreDispatcherScheduler : public LocalScheduler
     {
     private:
@@ -193,38 +240,50 @@ namespace rxcpp { namespace winrt {
         using LocalScheduler::Schedule;
         virtual Disposable Schedule(clock::time_point dueTime, Work work)
         {
-            // TODO: Build DispatchTimer instead
-            Scheduler::shared sched;
-            if (CurrentThreadScheduler::IsScheduleRequired())
-            {
-                if (Now() > dueTime || (dueTime - Now()) < std::chrono::milliseconds(500))
-                {
-                    sched = std::make_shared<ImmediateScheduler>();
-                }
-                else
-                {
-                    sched = std::make_shared<EventLoopScheduler>();
-                }
-            }
-            else
-            {
-                sched = std::make_shared<CurrentThreadScheduler>();
-            }
             auto that = shared_from_this();
-            return sched->Schedule(dueTime, 
-                [this, that, work](Scheduler::shared sched) mutable -> Disposable
-                {
-                    dispatcher->RunAsync(
-                        priority,
-                        ref new wuicore::DispatchedHandler(
-                            [that, this, work]() mutable
-                            {
-                                this->Do(work, that);
-                            },
-                            Platform::CallbackContext::Any)
-                    );
-                    return Disposable::Empty();
+            auto dispatchAsync = [this, that, work](Scheduler::shared sched) mutable -> Disposable
+            {
+                dispatcher->RunAsync(
+                    priority,
+                    ref new wuicore::DispatchedHandler(
+                        [that, this, work]() mutable
+                        {
+                            this->Do(work, that);
+                        },
+                        Platform::CallbackContext::Any
+                    ));
+                return Disposable::Empty();
+            };
+
+            auto now = Now();
+            auto interval = dueTime - now;
+            if (now > dueTime || interval < std::chrono::milliseconds(10))
+            {
+                return dispatchAsync(nullptr);
+            }
+
+            wf::TimeSpan timeSpan;
+            // convert to 100ns ticks
+            timeSpan.Duration = static_cast<int32>(std::chrono::duration_cast<std::chrono::nanoseconds>(interval).count() / 100);
+
+            auto dispatcherTimer = ref new wuixaml::DispatcherTimer();
+            // convert to 100ns ticks
+            dispatcherTimer->Interval = timeSpan;
+
+            auto result = Subscribe(FromEventPattern<wf::EventHandler<Platform::Object^>, Platform::Object>(
+                [dispatcherTimer](wf::EventHandler<Platform::Object^>^ h) {
+                    return dispatcherTimer->Tick += h; },
+                [dispatcherTimer](wf::EventRegistrationToken t) {
+                    dispatcherTimer->Tick -= t;
+                }),
+                [dispatchAsync, dispatcherTimer](EventPattern<Platform::Object^, Platform::Object^>) mutable {
+                    dispatcherTimer->Stop();
+                    dispatchAsync(nullptr);
                 });
+
+            dispatcherTimer->Start();
+
+            return result;
         }
 
     private:
