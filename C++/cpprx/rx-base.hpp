@@ -387,6 +387,9 @@ namespace rxcpp
     template<class T>
     class BehaviorSubject;
 
+    template<class T>
+    class AsyncSubject;
+
     template<class K, class T>
     class GroupedSubject;
 
@@ -480,6 +483,9 @@ namespace detail {
 
     template<class T>
     std::shared_ptr<Observable<T>> observable(const std::shared_ptr<BehaviorSubject<T>>& s){return std::static_pointer_cast<Observable<T>>(s);}
+
+    template<class T>
+    std::shared_ptr<Observable<T>> observable(const std::shared_ptr < AsyncSubject < T >> &s){ return std::static_pointer_cast < Observable < T >> (s); }
 
     template<class K, class T>
     std::shared_ptr<Observable<T>> observable(const std::shared_ptr<GroupedSubject<K, T>>& s){return std::static_pointer_cast<Observable<T>>(s);}

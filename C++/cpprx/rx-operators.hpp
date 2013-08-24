@@ -358,7 +358,7 @@ namespace rxcpp
         std::mutex lock;
         T value;
         SubjectState::type state;
-        std::exception_ptr error;
+        util::maybe<std::exception_ptr> error;
         std::vector<std::shared_ptr<Observer<T>>> observers;
 
         void RemoveObserver(std::shared_ptr<Observer<T>> toRemove)
@@ -371,6 +371,8 @@ namespace rxcpp
 
         BehaviorSubject();
     public:
+
+        typedef std::shared_ptr<BehaviorSubject<T>> shared;
 
         explicit BehaviorSubject(T t) : value(std::move(t)), state(SubjectState::Forwarding) {}
         
@@ -396,15 +398,25 @@ namespace rxcpp
                 }
             });
 
+            SubjectState::type localState = SubjectState::Invalid;
+            util::maybe<T> localValue;
+            util::maybe<std::exception_ptr> localError;
             {
                 std::unique_lock<decltype(lock)> guard(lock);
-                if (state == SubjectState::Completed) {
-                    observer->OnCompleted();
-                    return Disposable::Empty();
-                } else if (state == SubjectState::Error) {
-                    observer->OnError(error);
-                    return Disposable::Empty();
-                } else {
+
+                localState = state;
+
+                if (state == SubjectState::Forwarding || localState == SubjectState::Completed) 
+                {
+                    localValue.set(value);
+                }
+                else if (localState == SubjectState::Error)
+                {
+                    localError = error;
+                }
+
+                if (state == SubjectState::Forwarding)
+                {
                     for(auto& o : observers)
                     {
                         if (!o){
@@ -415,23 +427,33 @@ namespace rxcpp
                     observers.push_back(observer);
                 }
             }
-            if (state == SubjectState::Forwarding) {
-                observer->OnNext(value);
+
+            if (localState == SubjectState::Completed) {
+                observer->OnNext(localValue.get());
+                observer->OnCompleted();
+                return Disposable::Empty();
+            }
+            else if (localState == SubjectState::Error) {
+                observer->OnError(localError.get());
+                return Disposable::Empty();
+            }
+            else if (localState == SubjectState::Forwarding) {
+                observer->OnNext(localValue.get());
             }
 
             return d;
         }
 
-        virtual void OnNext(T element)
+        virtual void OnNext(const T& element)
         {
             std::unique_lock<decltype(lock)> guard(lock);
             auto local = observers;
-            value = std::move(element);
+            value = element;
             guard.unlock();
             for(auto& o : local)
             {
                 if (o) {
-                    o->OnNext(value);
+                    o->OnNext(element);
                 }
             }
         }
@@ -452,13 +474,13 @@ namespace rxcpp
         {
             std::unique_lock<decltype(lock)> guard(lock);
             state = SubjectState::Error;
-            error = errorArg;
+            error.set(errorArg);
             auto local = std::move(observers);
             guard.unlock();
             for(auto& o : local)
             {
                 if (o) {
-                    o->OnError(error);
+                    o->OnError(errorArg);
                 }
             }
         }
@@ -468,6 +490,169 @@ namespace rxcpp
     std::shared_ptr<BehaviorSubject<T>> CreateBehaviorSubject(Arg a)
     {
         return std::make_shared<BehaviorSubject<T>>(std::move(a));
+    }
+
+    template <class T>
+    class AsyncSubject :
+        public std::enable_shared_from_this<AsyncSubject<T>>,
+        public Observable<T>,
+        public Observer<T>
+    {
+        std::mutex lock;
+        util::maybe<T> value;
+        SubjectState::type state;
+        util::maybe<std::exception_ptr> error;
+        std::vector < std::shared_ptr < Observer<T >> > observers;
+
+        void RemoveObserver(std::shared_ptr < Observer < T >> toRemove)
+        {
+            std::unique_lock<decltype(lock)> guard(lock);
+            auto it = std::find(begin(observers), end(observers), toRemove);
+            if (it != end(observers))
+                *it = nullptr;
+        }
+
+    public:
+
+        typedef std::shared_ptr<AsyncSubject<T>> shared;
+
+        AsyncSubject() : value(), state(SubjectState::Forwarding) {}
+
+        virtual ~AsyncSubject() {
+            // putting this first means that the observers
+            // will be destructed outside the lock
+            std::vector < std::shared_ptr < Observer<T >> > empty;
+
+            std::unique_lock<decltype(lock)> guard(lock);
+            using std::swap;
+            swap(observers, empty);
+        }
+
+        virtual Disposable Subscribe(std::shared_ptr < Observer < T >> observer)
+        {
+            std::weak_ptr<Observer<T>> wptr = observer;
+            std::weak_ptr<AsyncSubject> wself = this->shared_from_this();
+
+            Disposable d([wptr, wself]{
+                if (auto self = wself.lock())
+                {
+                    self->RemoveObserver(wptr.lock());
+                }
+            });
+
+            SubjectState::type localState = SubjectState::Invalid;
+            util::maybe<T> localValue;
+            util::maybe<std::exception_ptr> localError;
+            {
+                std::unique_lock<decltype(lock)> guard(lock);
+
+                localState = state;
+
+                if (localState == SubjectState::Completed) 
+                {
+                    localValue = value;
+                }
+                else if (localState == SubjectState::Error)
+                {
+                    localError = error;
+                }
+                else if (state == SubjectState::Forwarding)
+                {
+                    for (auto& o : observers)
+                    {
+                        if (!o){
+                            o = std::move(observer);
+                            return d;
+                        }
+                    }
+                    observers.push_back(observer);
+                }
+            }
+
+            if (localState == SubjectState::Completed) {
+                if (localValue) {
+                    observer->OnNext(*localValue.get());
+                }
+                observer->OnCompleted();
+                return Disposable::Empty();
+            }
+            else if (localState == SubjectState::Error) {
+                observer->OnError(*localError.get());
+                return Disposable::Empty();
+            }
+
+            return d;
+        }
+
+        virtual void OnNext(const T& element)
+        {
+            std::unique_lock<decltype(lock)> guard(lock);
+            if (state == SubjectState::Forwarding) {
+                value = element;
+            }
+        }
+        virtual void OnCompleted()
+        {
+            std::unique_lock<decltype(lock)> guard(lock);
+            state = SubjectState::Completed;
+            auto local = std::move(observers);
+            auto localValue = value;
+            guard.unlock();
+            for (auto& o : local)
+            {
+                if (o) {
+                    if (localValue) {
+                        o->OnNext(*localValue.get());
+                    }
+                    o->OnCompleted();
+                }
+            }
+        }
+        virtual void OnError(const std::exception_ptr& errorArg)
+        {
+            std::unique_lock<decltype(lock)> guard(lock);
+            state = SubjectState::Error;
+            error.set(errorArg);
+            auto local = std::move(observers);
+            guard.unlock();
+            for (auto& o : local)
+            {
+                if (o) {
+                    o->OnError(errorArg);
+                }
+            }
+        }
+    };
+
+    template <class T>
+    std::shared_ptr<AsyncSubject<T>> CreateAsyncSubject()
+    {
+        return std::make_shared<AsyncSubject<T>>();
+    }
+
+    template<class F>
+    auto ToAsync(Scheduler::shared scheduler, F && f)
+        -> std::shared_ptr<AsyncSubject<decltype(f())>>
+    {
+        typedef decltype(f()) Value;
+        auto result = CreateAsyncSubject<Value>();
+        scheduler->Schedule([=]() -> Disposable 
+        {
+            util::maybe<Value> value;
+            try
+            {
+                value.set(f());
+            }
+            catch (...)
+            {
+                result->OnError(std::current_exception());
+                return Disposable::Empty();
+            }
+            result->OnNext(value.get());
+            result->OnCompleted();
+            return Disposable::Empty();
+        });
+        return result;
     }
 
     template <class F>
