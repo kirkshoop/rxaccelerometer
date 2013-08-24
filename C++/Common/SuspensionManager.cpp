@@ -234,6 +234,45 @@ task<void> SuspensionManager::SaveAsync(void)
     });
 }
 
+std::shared_ptr<rx::Observable<UINT64>> SuspensionManager::ReactiveSave(void)
+{
+    // Save the navigation state for all registered frames
+    for (auto && weakFrame : _registeredFrames)
+    {
+        auto frame = weakFrame->ResolvedFrame;
+        if (frame != nullptr) SaveFrameNavigationState(frame);
+    }
+
+    // Serialize the session state synchronously to avoid asynchronous access to shared
+    // state
+    auto sessionData = ref new InMemoryRandomAccessStream();
+    auto sessionDataWriter = ref new DataWriter(sessionData->GetOutputStreamAt(0));
+    WriteObject(sessionDataWriter, _sessionState);
+
+    // Once session state has been captured synchronously, begin the asynchronous process
+    // of writing the result to disk
+    auto reactiveStore = rxrt::FromAsyncPattern([=](){
+        return sessionDataWriter->StoreAsync(); });
+        
+    return rx::observable(rx::from(reactiveStore())
+        .select_many([=](unsigned int){ 
+            auto reactiveFlush = rxrt::FromAsyncPattern([=](){
+                return sessionDataWriter->FlushAsync(); });
+            return reactiveFlush(); })
+        .select_many([=](Boolean){
+            auto reactiveCreateFile = rxrt::FromAsyncPattern<IAsyncOperation<StorageFile^>, StorageFile^, String^, CreationCollisionOption >([](String^ name, CreationCollisionOption option){
+                return ApplicationData::Current->LocalFolder->CreateFileAsync(name, option); });
+            return reactiveCreateFile(sessionStateFilename, CreationCollisionOption::ReplaceExisting); })
+        .select_many([=](StorageFile^ file){
+            auto reactiveOpenFile = rxrt::FromAsyncPattern<IAsyncOperation<IRandomAccessStream^>, IRandomAccessStream^, FileAccessMode >([=](FileAccessMode mode){
+                return file->OpenAsync(mode); });
+            return reactiveOpenFile(FileAccessMode::ReadWrite); })
+        .select_many([=](IRandomAccessStream^ stream){
+            auto reactiveCopy = rxrt::FromAsyncPattern<IAsyncOperationWithProgress<UINT64, UINT64>, UINT64, IInputStream^, IOutputStream^ >([=](IInputStream^ in, IOutputStream^ out){
+                return RandomAccessStream::CopyAndCloseAsync(in, out); });
+            return reactiveCopy(sessionData->GetInputStreamAt(0), stream->GetOutputStreamAt(0)); }));
+}
+
 /// <summary>
 /// Restores previously saved <see cref="SessionState"/>.  Any <see cref="Frame"/> instances
 /// registered with <see cref="RegisterFrame"/> will also restore their prior navigation

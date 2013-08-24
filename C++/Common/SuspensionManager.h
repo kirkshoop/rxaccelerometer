@@ -31,6 +31,7 @@ namespace SDKSample
             static void UnregisterFrame(Windows::UI::Xaml::Controls::Frame^ frame);
             static Concurrency::task<void> SaveAsync(void);
             static Concurrency::task<void> RestoreAsync(void);
+            static std::shared_ptr<rx::Observable<UINT64>> ReactiveSave(void);
             static property Windows::Foundation::Collections::IMap<Platform::String^, Platform::Object^>^ SessionState
             {
                 Windows::Foundation::Collections::IMap<Platform::String^, Platform::Object^>^ get(void);
