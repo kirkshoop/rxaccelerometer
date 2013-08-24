@@ -17,9 +17,9 @@
 
 #include <collection.h>
 #include <ppltasks.h>
-#include "Common\LayoutAwarePage.h"
-#include "Common\SuspensionManager.h"
 #include <cpprx\rx.hpp>
 namespace rx = rxcpp;
 namespace rxrt = rxcpp::winrt;
+#include "Common\LayoutAwarePage.h"
+#include "Common\SuspensionManager.h"
 #include "App.xaml.h"
