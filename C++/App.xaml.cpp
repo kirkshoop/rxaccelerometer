@@ -39,7 +39,32 @@ using namespace Windows::UI::Xaml::Navigation;
 App::App()
 {
     InitializeComponent();
-    this->Suspending += ref new SuspendingEventHandler(this, &SDKSample::App::OnSuspending);
+
+    //this->Suspending += ref new SuspendingEventHandler(this, &SDKSample::App::OnSuspending);
+
+    auto suspending = rxrt::FromEventPattern<SuspendingEventHandler, SuspendingEventArgs>(
+        [this](SuspendingEventHandler^ h)
+    {
+        return this->Suspending += h;
+    },
+        [this](Windows::Foundation::EventRegistrationToken t)
+    {
+        this->Suspending -= t;
+    });
+
+    rx::from(suspending)
+        .subscribe([](rxrt::EventPattern<Platform::Object^, SuspendingEventArgs^> e){
+            auto deferral = e.EventArgs()->SuspendingOperation->GetDeferral();
+            rx::from(SuspensionManager::ReactiveSave())
+                .subscribe(
+                // next
+                    [](UINT64){
+                },
+                // completed
+                    [=](){
+                        deferral->Complete();
+                });
+        });
 }
 
 /// <summary>
@@ -116,20 +141,4 @@ void App::OnLaunched(LaunchActivatedEventArgs^ args)
     }
 }
 
-/// <summary>
-/// Invoked when application execution is being suspended.  Application state is saved
-/// without knowing whether the application will be terminated or resumed with the contents
-/// of memory still intact.
-/// </summary>
-/// <param name="sender">The source of the suspend request.</param>
-/// <param name="e">Details about the suspend request.</param>
-void App::OnSuspending(Object^ sender, SuspendingEventArgs^ e)
-{
-    (void) sender;    // Unused parameter
 
-    auto deferral = e->SuspendingOperation->GetDeferral();
-    SuspensionManager::SaveAsync().then([=]()
-    {
-        deferral->Complete();
-    });
-}

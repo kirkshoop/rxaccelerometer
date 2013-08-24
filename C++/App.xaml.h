@@ -21,7 +21,6 @@ namespace SDKSample
     {
     internal:
         App();
-        virtual void OnSuspending(Platform::Object^ sender, Windows::ApplicationModel::SuspendingEventArgs^ pArgs);
     protected:
         virtual void OnLaunched(Windows::ApplicationModel::Activation::LaunchActivatedEventArgs^ pArgs) override;
     };
