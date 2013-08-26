@@ -89,11 +89,30 @@ namespace detail {
         }
     };
 
+    template<class T, class Obj>
+    class BinderConnectable
+    {
+    };
+
+    template<class T>
+    class BinderConnectable<T, std::shared_ptr<ConnectableObservable<T>>>
+    {
+    public:
+        auto ref_count()
+            -> decltype(from(RefCount(obj))) {
+                return  from(RefCount(obj));
+        }
+    };
+
     template<class Obj>
     class Binder : public BinderNested<
         typename observable_item<Obj>::type,
         Obj,
-        is_observable<typename observable_item<Obj>::type>::value>
+        is_observable<typename observable_item<Obj>::type>::value>,
+    public BinderConnectable<
+        typename observable_item<Obj>::type,
+        Obj
+        >
     {
         typedef BinderNested<
         typename observable_item<Obj>::type,
@@ -252,6 +271,23 @@ namespace detail {
         auto skip_until(const SkipUntilTerminus& terminus) 
             -> decltype(from(SkipUntil<item_type>(obj, observable(terminus)))) {
             return      from(SkipUntil<item_type>(obj, observable(terminus)));
+        }
+        template<class MulticastSubject>
+        auto multicast(MulticastSubject subject)
+            -> decltype(from(Multicast(obj, subject))) {
+                return  from(Multicast(obj, subject));
+        }
+        auto publish()
+            -> decltype(from(Publish(obj))) {
+                return  from(Publish(obj));
+        }
+        auto publish(item_type value)
+            -> decltype(from(Publish(obj, value))) {
+                return  from(Publish(obj, value));
+        }
+        auto publish_last()
+            -> decltype(from(PublishLast(obj))) {
+                return  from(PublishLast(obj));
         }
         template<template<class Value>class Allocator>
         auto to_vector() 
@@ -430,6 +466,10 @@ namespace detail {
     template<class T>
     Binder<std::shared_ptr<Observable<T>>> from(std::shared_ptr<Observable<T>> obj) { 
         return Binder<std::shared_ptr<Observable<T>>>(std::move(obj)); }
+
+    template<class T>
+    Binder < std::shared_ptr < ConnectableObservable<T >> > from(std::shared_ptr < ConnectableObservable < T >> obj) {
+        return Binder < std::shared_ptr < ConnectableObservable<T >> >(std::move(obj)); }
 
     template<class K, class T>
     Binder<std::shared_ptr<GroupedObservable<K, T>>> from(std::shared_ptr<GroupedObservable<K, T>> obj) { 

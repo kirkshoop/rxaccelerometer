@@ -655,6 +655,47 @@ namespace rxcpp
         return result;
     }
 
+    template <class Source, class Subject>
+    class ConnectableSubject : ConnectableObservable<typename subject_item<Subject>::type>
+    {
+    private:
+        ConnectableSubject();
+
+        Subject subject;
+        Source source;
+        util::maybe<Disposable> subscription;
+        std::mutex lock;
+
+    public:
+        virtual ~ConnectableSubject() {}
+
+        ConnectableSubject(Source source, Subject subject) : source(source), subject(subject)
+        {
+        }
+
+        virtual Disposable Connect()
+        {
+            std::unique_lock<std::mutex> guard(lock);
+            if (!subscription)
+            {
+                subscription.set(source->Subscribe(observer(subject)));
+            }
+            return Disposable([]()
+            {
+                if (subscription)
+                {
+                    subscription->Dispose();
+                    subscription.reset();
+                }
+            });
+        }
+
+        virtual Disposable Subscribe(std::shared_ptr < Observer < typename subject_item<Subject>::type >> observer)
+        {
+            return subject->Subscribe(observer);
+        }
+    };
+
     template <class F>
     struct fix0_thunk {
         F f;
@@ -1855,6 +1896,93 @@ namespace rxcpp
                         observer->OnError(error);
                     });
             });
+    }
+
+
+    template <class T, class MulticastSubject>
+    std::shared_ptr<ConnectableObservable<T>> Multicast(const std::shared_ptr < Observable < T >> &source, const std::shared_ptr<MulticastSubject>& multicastSubject)
+    {
+        return std::static_pointer_cast<ConnectableObservable<T>>(
+            std::make_shared < ConnectableSubject < std::shared_ptr < Observable < T >> , std::shared_ptr<MulticastSubject> >> (source, multicastSubject));
+    }
+
+    template <class T>
+    std::shared_ptr<ConnectableObservable<T>> Publish(const std::shared_ptr < Observable < T >> &source)
+    {
+        typedef std::shared_ptr<Subject<T>> MulticastSubject;
+        auto multicastSubject = std::make_shared<MulticastSubject>();
+        return Multicast(source, multicastSubject);
+    }
+
+    template <class T, class V>
+    std::shared_ptr<ConnectableObservable<T>> Publish(const std::shared_ptr < Observable < T >> &source, V value)
+    {
+        typedef std::shared_ptr<BehaviorSubject<T>> MulticastSubject;
+        auto multicastSubject = std::make_shared<MulticastSubject>(value);
+        return Multicast(source, multicastSubject);
+    }
+
+    template <class T>
+    std::shared_ptr<ConnectableObservable<T>> PublishLast(const std::shared_ptr < Observable < T >> &source)
+    {
+        typedef std::shared_ptr<AsyncSubject<T>> MulticastSubject;
+        auto multicastSubject = std::make_shared<MulticastSubject>();
+        return Multicast(source, multicastSubject);
+    }
+
+    template <class T>
+    const std::shared_ptr<Observable<T>> RefCount(
+        const std::shared_ptr<ConnectableObservable<T>>& source
+        )
+    {
+        struct State
+        {
+            State() : refcount(0) {}
+            std::mutex lock;
+            size_t refcount;
+            Disposable subscription;
+        };
+        auto state = std::make_shared<State>();
+
+        return CreateObservable<T>(
+            [=](std::shared_ptr < Observer < T >> observer)
+        {
+            auto subscription = Subscribe(
+                source,
+                // on next
+                [=](const T& element)
+            {
+                observer->OnNext(element);
+            },
+                // on completed
+                [=]
+            {
+                observer->OnCompleted();
+            },
+                // on error
+                [=](const std::exception_ptr& error)
+            {
+                observer->OnError(error);
+            });
+
+            {
+                std::unique_lock<std::mutex> guard(state->lock);
+                if (++state->refcount == 1)
+                {
+                    state->subscription = source->Connect();
+                }
+            }
+
+            return Disposable([=](){
+                subscription.Dispose();
+
+                std::unique_lock<std::mutex> guard(state->lock);
+                if (--state->refcount == 0)
+                {
+                    state->subscription.Dispose();
+                }
+            });
+        });
     }
 
     template <class T, class Integral>
