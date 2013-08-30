@@ -33,20 +33,20 @@ namespace SDKSample
             Scenario3();
     
         protected:
-            virtual void OnNavigatedTo(Windows::UI::Xaml::Navigation::NavigationEventArgs^ e) override;
             virtual void OnNavigatedFrom(Windows::UI::Xaml::Navigation::NavigationEventArgs^ e) override;
     
         private:
+            typedef rxrt::EventPattern<Object^, Windows::UI::Xaml::RoutedEventArgs^> RoutedEventPattern;
+
             MainPage^ rootPage;
             Windows::UI::Core::CoreDispatcher^ dispatcher;
             Windows::Devices::Sensors::Accelerometer^ accelerometer;
+            std::shared_ptr<rx::BehaviorSubject<bool>> enabled;
+            rxrt::ReactiveCommand<RoutedEventPattern>::shared enable;
+            rxrt::ReactiveCommand<RoutedEventPattern>::shared disable;
             rx::Disposable visibilitySubscription;
             rx::Disposable dispatchIntervalSubscription;
-            //Windows::Foundation::EventRegistrationToken visibilityToken;
             uint32 desiredReportInterval;
-
-            void ScenarioEnable(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
-            void ScenarioDisable(Platform::Object^ sender, Windows::UI::Xaml::RoutedEventArgs^ e);
         };
     }
 }

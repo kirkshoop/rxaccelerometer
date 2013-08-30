@@ -31,8 +31,8 @@
             </Grid.RowDefinitions>
             <TextBlock x:Name="InputTextBlock"  TextWrapping="Wrap" Grid.Row="0" Style="{StaticResource BasicTextStyle}" HorizontalAlignment="Left" Text="Registers an event listener for accelerometer data and displays the X, Y and Z acceleration values as they are reported." />
             <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Grid.Row="1">
-                <Button x:Name="ScenarioEnableButton" Content="Enable" Margin="0,0,10,0" Click="ScenarioEnable"/>
-                <Button x:Name="ScenarioDisableButton"  Content="Disable" Margin="0,0,10,0" Click="ScenarioDisable"/>
+                <Button x:Name="ScenarioEnableButton" Content="Enable" Margin="0,0,10,0" />
+                <Button x:Name="ScenarioDisableButton"  Content="Disable" Margin="0,0,10,0"/>
             </StackPanel>
         </Grid>
 
