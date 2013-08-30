@@ -1373,7 +1373,7 @@ namespace rxcpp
                 const typename observable_item<
                     typename std::result_of<CS(const T&)>::type>::type&)>::type>>
     {
-        typedef typename std::result_of<CS(const T&)>::type C;
+        typedef typename std::decay<typename std::result_of<CS(const T&)>::type>::type C;
         typedef typename observable_item<C>::type CI;
         typedef typename std::result_of<RS(const T&, const CI&)>::type U;
 
