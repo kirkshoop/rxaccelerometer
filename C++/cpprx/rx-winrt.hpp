@@ -289,7 +289,12 @@ namespace rxcpp { namespace winrt {
             {
                 throw std::logic_error("No window current");
             }
-            return std::make_shared<CoreDispatcherScheduler>(window->Dispatcher);
+            auto d = window->Dispatcher;
+            if (d == nullptr)
+            {
+                throw std::logic_error("No dispatcher on current window");
+            }
+            return std::make_shared<CoreDispatcherScheduler>(d);
         }
 
         wuicore::CoreDispatcher^ Dispatcher() 
@@ -563,6 +568,82 @@ namespace rxcpp { namespace winrt {
         }));
 
         return cd;
+    }
+
+    namespace detail
+    {
+
+        template<class T, class SOp, class SOb>
+        auto DeferOperation(const std::shared_ptr < Observable < T >> &source, SOp sop, SOb sob, Scheduler::shared scheduler = nullptr)
+            -> decltype(sob(*(T*) nullptr))
+        {
+            typedef decltype(sob(*(T*) nullptr)) ResultObservable;
+            typedef typename observable_item<ResultObservable>::type Result;
+            if (!scheduler)
+            {
+                scheduler = std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current());
+            }
+            return rx::CreateObservable<Result>(
+                [=](const std::shared_ptr < Observer < Result >> &observer)
+                {
+                    return from(source)
+                        .select_many(
+                        //select observable
+                        [=](T t) -> ResultObservable
+                        {
+                            // must take the deferral early while the event is still on the stack. 
+                            auto o = sop(t);
+                            auto deferral = o->GetDeferral();
+ 
+                            return Using<Result, SerialDisposable>(
+                                // resource factory
+                                [=]() -> SerialDisposable
+                                {
+                                    // return a disposable that will complete the operation
+                                    SerialDisposable scope;
+                                    scope.Set(ScheduledDisposable(
+                                        scheduler,
+                                        Disposable(
+                                        [=]()
+                                        {
+                                            deferral->Complete();
+                                        })));
+                                    return scope;
+                                },
+                                // observable factory
+                                [=](SerialDisposable)
+                                {
+                                    return sob(t);
+                                });
+                        })
+                        .observe_on(scheduler)
+                        .subscribe(
+                        //on next
+                        [=](Result r)
+                        {
+                            observer->OnNext(r);
+                        },
+                        //on completed
+                        [=]()
+                        {
+                            observer->OnCompleted();
+                        },
+                        //on error
+                        [=](std::exception_ptr e)
+                        {
+                            observer->OnError(e);
+                        }
+                        );
+                });
+        }
+    }
+
+    struct defer_operation {};
+    template<class T, class SOp, class SOb>
+    auto rxcpp_chain(defer_operation && , const std::shared_ptr < Observable < T >> &source, SOp sop, SOb sob, Scheduler::shared scheduler = nullptr)
+        -> decltype(detail::DeferOperation(source, sop, sob, scheduler))
+    {
+        return      detail::DeferOperation(source, sop, sob, scheduler);
     }
 
 } }
