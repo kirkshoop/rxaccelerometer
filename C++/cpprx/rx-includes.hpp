@@ -53,10 +53,10 @@
 
 #endif
 
-#if !defined(BUILDING_FOR_DESKTOP) && (defined(WINDOWS) || defined(WIN32) || defined(_WIN32))
-#define RXCPP_USE_WINRT 1
-#else
+#if !defined(WINAPI_FAMILY) || (WINAPI_FAMILY == WINAPI_FAMILY_DESKTOP_APP)
 #define RXCPP_USE_WINRT 0
+#else
+#define RXCPP_USE_WINRT 1
 #endif
 
 #if defined(RXCPP_FORCE_USE_VARIADIC_TEMPLATES)
