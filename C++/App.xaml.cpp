@@ -52,18 +52,23 @@ App::App()
         this->Suspending -= t;
     });
 
+    auto ct = std::make_shared<rx::CurrentThreadScheduler>();
+    typedef rxrt::EventPattern<Platform::Object^, SuspendingEventArgs^> SuspendingEventPattern;
     rx::from(suspending)
-        .subscribe([](rxrt::EventPattern<Platform::Object^, SuspendingEventArgs^> e){
-            auto deferral = e.EventArgs()->SuspendingOperation->GetDeferral();
-            rx::from(SuspensionManager::ReactiveSave())
-                .subscribe(
-                // next
-                    [](UINT64){
-                },
-                // completed
-                    [=](){
-                        deferral->Complete();
-                });
+        .chain<rxrt::defer_operation>(
+        [](SuspendingEventPattern ep)
+        {
+            return ep.EventArgs()->SuspendingOperation;
+        },
+        [](SuspendingEventPattern)
+        {
+            return SuspensionManager::ReactiveSave();
+        },
+        ct)
+        .subscribe(
+        // next
+        [](UINT64)
+        {
         });
 }
 
