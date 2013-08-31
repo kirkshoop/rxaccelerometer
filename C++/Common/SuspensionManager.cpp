@@ -234,7 +234,7 @@ task<void> SuspensionManager::SaveAsync(void)
     });
 }
 
-std::shared_ptr<rx::Observable<UINT64>> SuspensionManager::ReactiveSave(void)
+std::shared_ptr<rx::Observable<bool>> SuspensionManager::ReactiveSave(void)
 {
     // Save the navigation state for all registered frames
     for (auto && weakFrame : _registeredFrames)
@@ -249,28 +249,36 @@ std::shared_ptr<rx::Observable<UINT64>> SuspensionManager::ReactiveSave(void)
     auto sessionDataWriter = ref new DataWriter(sessionData->GetOutputStreamAt(0));
     WriteObject(sessionDataWriter, _sessionState);
 
-    // Once session state has been captured synchronously, begin the asynchronous process
+    // one-time construction of reactive fucntions needed to save.
+    // would be nice to have the projections add these as methods 
+    // on the objects rather than these free-functions that take 
+    // the object and the parameters
+    auto reactiveStore = rxrt::FromAsyncPattern<DataWriter^>([](DataWriter^ dw){
+        return dw->StoreAsync(); });
+    auto reactiveFlush = rxrt::FromAsyncPattern<DataWriter^>([](DataWriter^ dw){
+        return dw->FlushAsync(); });
+    auto reactiveCreateFile = rxrt::FromAsyncPattern<StorageFolder^, String^, CreationCollisionOption >([](StorageFolder^ folder, String^ name, CreationCollisionOption option){
+        return folder->CreateFileAsync(name, option); });
+    auto reactiveOpenFile = rxrt::FromAsyncPattern<StorageFile^, FileAccessMode >([](StorageFile^ f, FileAccessMode mode){
+        return f->OpenAsync(mode); });
+    auto reactiveCopy = rxrt::FromAsyncPattern<IInputStream^, IOutputStream^ >([](IInputStream^ in, IOutputStream^ out){
+        return RandomAccessStream::CopyAndCloseAsync(in, out); });
+
+    // Begin the asynchronous process
     // of writing the result to disk
-    auto reactiveStore = rxrt::FromAsyncPattern([=](){
-        return sessionDataWriter->StoreAsync(); });
-        
-    return rx::observable(rx::from(reactiveStore())
+    return observable(from(reactiveStore(sessionDataWriter))
         .select_many([=](unsigned int){ 
-            auto reactiveFlush = rxrt::FromAsyncPattern([=](){
-                return sessionDataWriter->FlushAsync(); });
-            return reactiveFlush(); })
+            return reactiveFlush(sessionDataWriter); })
         .select_many([=](Boolean){
-            auto reactiveCreateFile = rxrt::FromAsyncPattern<IAsyncOperation<StorageFile^>, StorageFile^, String^, CreationCollisionOption >([](String^ name, CreationCollisionOption option){
-                return ApplicationData::Current->LocalFolder->CreateFileAsync(name, option); });
-            return reactiveCreateFile(sessionStateFilename, CreationCollisionOption::ReplaceExisting); })
+            return reactiveCreateFile(ApplicationData::Current->LocalFolder, sessionStateFilename, CreationCollisionOption::ReplaceExisting); })
         .select_many([=](StorageFile^ file){
-            auto reactiveOpenFile = rxrt::FromAsyncPattern<IAsyncOperation<IRandomAccessStream^>, IRandomAccessStream^, FileAccessMode >([=](FileAccessMode mode){
-                return file->OpenAsync(mode); });
-            return reactiveOpenFile(FileAccessMode::ReadWrite); })
+            return reactiveOpenFile(file, FileAccessMode::ReadWrite); })
         .select_many([=](IRandomAccessStream^ stream){
-            auto reactiveCopy = rxrt::FromAsyncPattern<IAsyncOperationWithProgress<UINT64, UINT64>, UINT64, IInputStream^, IOutputStream^ >([=](IInputStream^ in, IOutputStream^ out){
-                return RandomAccessStream::CopyAndCloseAsync(in, out); });
-            return reactiveCopy(sessionData->GetInputStreamAt(0), stream->GetOutputStreamAt(0)); }));
+            return reactiveCopy(sessionData->GetInputStreamAt(0), stream->GetOutputStreamAt(0)); })
+        .select([](UINT64){ // convert to bool observable
+            return true; }) // success! call onnext with true
+        .publish(false) // only save once even if the caller subscribes more than once. initially onnext will be called with false
+        .connect_forever()); // save now, even if the caller does not subscribe
 }
 
 /// <summary>
