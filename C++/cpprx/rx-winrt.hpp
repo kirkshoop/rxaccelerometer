@@ -24,9 +24,9 @@ namespace rxcpp { namespace winrt {
             eventargs(eventargs)
         {}
 
-        TSender Sender() {
+        TSender Sender() const {
             return sender;};
-        TEventArgs EventArgs() {
+        TEventArgs EventArgs() const {
             return eventargs;};
 
     private:
@@ -570,14 +570,37 @@ namespace rxcpp { namespace winrt {
         return cd;
     }
 
+    template <class O>
+    struct OperationPattern
+    {
+        typedef decltype(((O)nullptr)->GetDeferral()) D;
+
+        OperationPattern(O operation) :
+            operation(operation),
+            deferral(operation->GetDeferral())
+        {
+        }
+
+        O Operation() const {
+            return operation;
+        };
+        D Deferral() const {
+            return deferral;
+        };
+
+    private:
+        O operation;
+        D deferral;
+    };
+
     namespace detail
     {
 
         template<class T, class SOp, class SOb>
         auto DeferOperation(const std::shared_ptr < Observable < T >> &source, SOp sop, SOb sob, Scheduler::shared scheduler = nullptr)
-            -> decltype(sob(*(T*) nullptr))
+            ->      decltype(sob(*(OperationPattern<decltype(sop(*(T*) nullptr))>*)nullptr, *(T*) nullptr))
         {
-            typedef decltype(sob(*(T*) nullptr)) ResultObservable;
+            typedef decltype(sob(*(OperationPattern<decltype(sop(*(T*) nullptr))>*)nullptr, *(T*) nullptr)) ResultObservable;
             typedef typename observable_item<ResultObservable>::type Result;
             if (!scheduler)
             {
@@ -593,7 +616,7 @@ namespace rxcpp { namespace winrt {
                         {
                             // must take the deferral early while the event is still on the stack. 
                             auto o = sop(t);
-                            auto deferral = o->GetDeferral();
+                            auto op = OperationPattern<decltype(o)>(o);
  
                             return Using<Result, SerialDisposable>(
                                 // resource factory
@@ -606,14 +629,14 @@ namespace rxcpp { namespace winrt {
                                         Disposable(
                                         [=]()
                                         {
-                                            deferral->Complete();
+                                            op.Deferral()->Complete();
                                         })));
                                     return scope;
                                 },
                                 // observable factory
                                 [=](SerialDisposable)
                                 {
-                                    return sob(t);
+                                    return sob(op, t);
                                 });
                         })
                         .observe_on(scheduler)

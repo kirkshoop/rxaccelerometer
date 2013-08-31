@@ -60,7 +60,7 @@ App::App()
         {
             return ep.EventArgs()->SuspendingOperation;
         },
-        [](SuspendingEventPattern)
+        [](rxrt::OperationPattern<SuspendingOperation^>, SuspendingEventPattern)
         {
             return SuspensionManager::ReactiveSave();
         },
