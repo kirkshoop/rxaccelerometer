@@ -44,13 +44,13 @@ App::App()
 
     auto suspending = rxrt::FromEventPattern<SuspendingEventHandler, SuspendingEventArgs>(
         [this](SuspendingEventHandler^ h)
-    {
-        return this->Suspending += h;
-    },
+        {
+            return this->Suspending += h;
+        },
         [this](Windows::Foundation::EventRegistrationToken t)
-    {
-        this->Suspending -= t;
-    });
+        {
+            this->Suspending -= t;
+        });
 
     auto ct = std::make_shared<rx::CurrentThreadScheduler>();
     typedef rxrt::EventPattern<Platform::Object^, SuspendingEventArgs^> SuspendingEventPattern;
@@ -65,11 +65,8 @@ App::App()
             return SuspensionManager::ReactiveSave();
         },
         ct)
-        .subscribe(
-        // next
-        [](UINT64)
-        {
-        });
+        .publish()
+        .connect_forever();
 }
 
 /// <summary>
