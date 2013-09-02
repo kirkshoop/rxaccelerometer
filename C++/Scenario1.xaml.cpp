@@ -43,7 +43,7 @@ Scenario1::Scenario1() :
 
 #if 0
     // if there is something to do on a background thread
-    from(enable->RegisterAsyncFunction<RoutedEventPattern>(
+    enable->RegisterAsyncFunction(
         [this](RoutedEventPattern ep)
         {
             // background thread
