@@ -35,28 +35,46 @@ Scenario1::Scenario1() :
     InitializeComponent();
 
     // start out disabled
-    enabled = std::make_shared<rx::BehaviorSubject<bool>>(false);
+    auto enabled = std::make_shared<rx::BehaviorSubject<bool>>(false);
+    auto working = std::make_shared<rx::BehaviorSubject<bool>>(false);
 
-    // use enabled to control canExecute
-    enable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled).select([](bool b){return !b; })));
-    disable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(enabled));
+    // use !enabled and !working to control canExecute
+    enable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled).combine_latest([](bool e, bool w){
+        return !e && !w; }, working)));
+    // use enabled and !working to control canExecute
+    disable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled).combine_latest([](bool e, bool w){
+        return e && !w; }, working)));
 
-#if 0
+    // when enable or disable is executing mark as working (both commands should be disabled)
+    observable(from(enable->IsExecuting())
+        .combine_latest([](bool ew, bool dw){
+            return ew || dw; }, disable->IsExecuting()))
+        ->Subscribe(observer(working));
+
+    // when enable is executed mark the scenario enabled, when disable is executed mark the scenario disabled
+    observable(from(observable(enable))
+        .select([](RoutedEventPattern){
+            return true; })
+        .merge(observable(from(observable(disable)).select([](RoutedEventPattern){
+            return false; }))))
+        ->Subscribe(observer(enabled));
+
     // if there is something to do on a background thread
-    enable->RegisterAsyncFunction(
+    from(enable->RegisterAsyncFunction(
         [this](RoutedEventPattern ep)
         {
             // background thread
-            ...
+            //...
+            // enable and disable commands should be disabled until this is finished
+            std::this_thread::sleep_for(std::chrono::seconds(2));
             return ep; // or something else
         }))
         // back on the ui thread
         .subscribe(
         [this](RoutedEventPattern) // take whatever was returned above
         {
-            ...
+            //...
         });
-#endif
 
     from(observable(enable))
         // stay on the ui thread
@@ -142,8 +160,6 @@ Scenario1::Scenario1() :
             {
                 rootPage->NotifyUser("No accelerometer found", NotifyType::ErrorMessage);
             }
-            // now the scenario is enabled
-            this->enabled->OnNext(true);
         });
 
     rxrt::BindCommand(ScenarioEnableButton, enable);
@@ -154,8 +170,6 @@ Scenario1::Scenario1() :
         {
             readingSubscription.Dispose();
             visibilitySubscription.Dispose();
-            // now the scenario is disabled
-            this->enabled->OnNext(false);
         });
 
     rxrt::BindCommand(ScenarioDisableButton, disable);

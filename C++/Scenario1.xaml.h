@@ -40,7 +40,6 @@ namespace SDKSample
 
             MainPage^ rootPage;
             Windows::Devices::Sensors::Accelerometer^ accelerometer;
-            std::shared_ptr<rx::BehaviorSubject<bool>> enabled;
             rxrt::ReactiveCommand<RoutedEventPattern>::shared enable;
             rxrt::ReactiveCommand<RoutedEventPattern>::shared disable;
             rx::Disposable readingSubscription;
