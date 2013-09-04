@@ -24,22 +24,25 @@ namespace rxcpp
 
         virtual void OnNext(const T& element)
         {
-            if (observer) {
+            auto local = observer;
+            if (local) {
                 RXCPP_UNWIND(disposer, [&](){
                     disposable.Dispose();
                 });
-                observer->OnNext(element);
+                local->OnNext(element);
                 disposer.dismiss();
             }
         }
         virtual void OnCompleted() 
         {
-            if (observer) {
+            auto local = observer;
+            if (local) {
                 RXCPP_UNWIND(disposer, [&](){
                     disposable.Dispose();
                 });
                 std::shared_ptr<Observer<T>> final;
                 using std::swap;
+                // must swap with observer not local
                 swap(final, observer);
                 final->OnCompleted();
                 disposer.dismiss();
@@ -47,12 +50,14 @@ namespace rxcpp
         }
         virtual void OnError(const std::exception_ptr& error) 
         {
-            if (observer) {
+            auto local = observer;
+            if (local) {
                 RXCPP_UNWIND(disposer, [&](){
                     disposable.Dispose();
                 });
                 std::shared_ptr<Observer<T>> final;
                 using std::swap;
+                // must swap with observer not local
                 swap(final, observer);
                 final->OnError(error);
                 disposer.dismiss();
@@ -122,7 +127,7 @@ namespace rxcpp
     template <class T>
     struct CreatedObserver : public Observer<T>
     {
-        std::function<void(const T&)>   onNext;
+        std::shared_ptr<std::function<void(const T&)>>   onNext;
         std::function<void()>           onCompleted;
         std::function<void(const std::exception_ptr&)> onError;
         
@@ -132,9 +137,10 @@ namespace rxcpp
 
         virtual void OnNext(const T& element)
         {
-            if(onNext)
+            auto local = onNext;
+            if (local)
             {
-                onNext(element);
+                (*local.get())(element);
             }
         }
         virtual void OnCompleted() 
@@ -175,7 +181,7 @@ namespace rxcpp
         )
     {
         auto p = std::make_shared<CreatedObserver<T>>();
-        p->onNext = std::move(onNext);
+        p->onNext = std::make_shared<std::function<void(const T&) >>(std::move(onNext));
         p->onCompleted = std::move(onCompleted);
         p->onError = std::move(onError);
         
@@ -273,8 +279,8 @@ namespace rxcpp
             Run run;
             struct State
             {
-                SerialDisposable sink;
-                SerialDisposable subscription;
+                SingleAssignmentDisposable sink;
+                SingleAssignmentDisposable subscription;
             };
         public:
             Producer(Run run) : 
@@ -2581,12 +2587,6 @@ namespace rxcpp
             -> Disposable
             {
 
-                struct TerminusState {
-                    enum type {
-                        Live,
-                        Terminated
-                    };
-                };
                 struct TakeState {
                     enum type {
                         Taking,
@@ -2594,9 +2594,9 @@ namespace rxcpp
                     };
                 };
                 struct State {
-                    State() : terminusState(TerminusState::Live), takeState(TakeState::Taking) {}
-                    std::atomic<typename TerminusState::type> terminusState;
-                    std::atomic<typename TakeState::type> takeState;
+                    State() : takeState(TakeState::Taking) {}
+                    std::mutex lock;
+                    typename TakeState::type takeState;
                 };
                 auto state = std::make_shared<State>();
 
@@ -2605,19 +2605,30 @@ namespace rxcpp
                 cd.Add(Subscribe(
                     terminus,
                 // on next
-                    [=](const T& element)
+                    [=](const U& element)
                     {
-                        state->terminusState = TerminusState::Terminated;
+                        std::unique_lock<std::mutex> guard(state->lock);
+                        if (state->takeState == TakeState::Taking) {
+                            state->takeState = TakeState::Completed;
+                            observer->OnCompleted();
+                        }
+                        guard.unlock();
+                        cd.Dispose();
                     },
                 // on completed
                     [=]
                     {
-                        state->terminusState = TerminusState::Terminated;
                     },
                 // on error
                     [=](const std::exception_ptr& error)
                     {
-                        state->terminusState = TerminusState::Terminated;
+                        std::unique_lock<std::mutex> guard(state->lock);
+                        if (state->takeState == TakeState::Taking) {
+                            state->takeState = TakeState::Completed;
+                            observer->OnError(error);
+                        }
+                        guard.unlock();
+                        cd.Dispose();
                     }));
 
                 cd.Add(Subscribe(
@@ -2625,28 +2636,31 @@ namespace rxcpp
                 // on next
                     [=](const T& element)
                     {
-                        if (state->terminusState == TerminusState::Live) {
+                        std::unique_lock<std::mutex> guard(state->lock);
+                        if (state->takeState == TakeState::Taking) {
                             observer->OnNext(element);
-                        } else if (state->takeState.exchange(TakeState::Completed) == TakeState::Taking) {
-                            observer->OnCompleted();
-                            cd.Dispose();
                         }
                     },
                 // on completed
                     [=]
                     {
-                        if (state->takeState.exchange(TakeState::Completed) == TakeState::Taking) {
-                            state->terminusState = TerminusState::Terminated;
+                        std::unique_lock<std::mutex> guard(state->lock);
+                        if (state->takeState == TakeState::Taking) {
+                            state->takeState = TakeState::Completed;
                             observer->OnCompleted();
-                            cd.Dispose();
                         }
+                        guard.unlock();
+                        cd.Dispose();
                     },
                 // on error
                     [=](const std::exception_ptr& error)
                     {
-                        state->takeState = TakeState::Completed;
-                        state->terminusState = TerminusState::Terminated;
-                        observer->OnError(error);
+                        std::unique_lock<std::mutex> guard(state->lock);
+                        if (state->takeState == TakeState::Taking) {
+                            state->takeState = TakeState::Completed;
+                            observer->OnError(error);
+                        }
+                        guard.unlock();
                         cd.Dispose();
                     }));
                 return cd;
@@ -2732,7 +2746,7 @@ namespace rxcpp
                 cd.Add(Subscribe(
                     terminus,
                 // on next
-                    [=](const T& element)
+                    [=](const U& element)
                     {
                         state->skipState = SkipState::Taking;
                     },
