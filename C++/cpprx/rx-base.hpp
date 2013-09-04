@@ -318,6 +318,71 @@ namespace rxcpp
         }
     };
 
+    class SingleAssignmentDisposable
+    {
+        struct State
+        {
+            mutable Disposable disposable;
+            mutable bool disposed;
+            mutable bool set;
+            mutable std::mutex lock;
+
+            State() : disposable(Disposable::Empty()), disposed(false), set(false) {}
+
+            void Set(Disposable disposeArg) const
+            {
+                std::unique_lock<decltype(lock)> guard(lock);
+                if (set) {
+                    throw std::logic_error("SingleAssignmentDisposable already set");
+                }
+                set = true;
+                if (!disposed) {
+                    using std::swap;
+                    swap(disposable, disposeArg);
+                }
+                guard.unlock();
+                disposeArg.Dispose();
+            }
+            void Dispose()
+            {
+                std::unique_lock<decltype(lock)> guard(lock);
+                if (!disposed) {
+                    disposed = true;
+                    auto local = std::move(disposable);
+                    guard.unlock();
+                    local.Dispose();
+                }
+            }
+        };
+
+        mutable std::shared_ptr<State> state;
+
+    public:
+
+        SingleAssignmentDisposable()
+            : state(std::make_shared<State>())
+        {
+        }
+        void Dispose() const
+        {
+            state->Dispose();
+        }
+        void Set(Disposable disposeArg) const
+        {
+            state->Set(std::move(disposeArg));
+        }
+        operator Disposable() const
+        {
+            // make sure to capture state and not 'this'.
+            // usage means that 'this' will usualy be destructed
+            // immediately
+            auto local = state;
+            return Disposable([local]{
+                local->Dispose();
+            });
+        }
+    };
+
     struct LocalScheduler : public Scheduler
     {
     private:
