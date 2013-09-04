@@ -28,9 +28,8 @@ using namespace Platform;
 
 Scenario2::Scenario2() : 
     rootPage(MainPage::Current), 
-    shakeCounter(0),
-    shakenSubscription(rx::Disposable::Empty()),
-    visibilitySubscription(rx::Disposable::Empty())
+    navigated(std::make_shared < rx::BehaviorSubject < bool >> (true)),
+    shakeCounter(0)
 {
     InitializeComponent();
 
@@ -59,96 +58,106 @@ Scenario2::Scenario2() :
             return false; }))))
         ->Subscribe(observer(enabled));
 
+    typedef TypedEventHandler<Accelerometer^, AccelerometerShakenEventArgs^> AccelerometerShakenTypedEventHandler;
+    auto shaken = from(rxrt::FromEventPattern<AccelerometerShakenTypedEventHandler>(
+        [this](AccelerometerShakenTypedEventHandler^ h)
+        {
+            return this->accelerometer->Shaken += h;
+        },
+        [this](Windows::Foundation::EventRegistrationToken t)
+        {
+            this->accelerometer->Shaken -= t;
+        }))
+        .select([this](rxrt::EventPattern<Accelerometer^, AccelerometerShakenEventArgs^> e)
+        {
+            // on the sensor thread
+            return ++this->shakeCounter;
+        })
+        // push shaken to ui thread
+        .observe_on_dispatcher()
+        .publish()
+        .ref_count();
+
+    auto currentWindow = Window::Current;
+    auto visiblityChanged = from(rxrt::FromEventPattern<WindowVisibilityChangedEventHandler, VisibilityChangedEventArgs>(
+        [currentWindow](WindowVisibilityChangedEventHandler^ h)
+        {
+            return currentWindow->VisibilityChanged += h;
+        },
+        [currentWindow](Windows::Foundation::EventRegistrationToken t)
+        {
+            currentWindow->VisibilityChanged -= t;
+        }))
+        .select([](rxrt::EventPattern<Platform::Object^, VisibilityChangedEventArgs^> e)
+        {
+            return e.EventArgs()->Visible;
+        })
+        .publish()
+        .ref_count();
+
+    auto visible = from(visiblityChanged)
+        .where([](bool v)
+    {
+        return !!v;
+    }).merge(
+        from(observable(navigated))
+        .where([](bool n)
+    {
+        return n;
+    }));
+
+    auto invisible = from(visiblityChanged)
+        .where([](bool v)
+    {
+        return !v;
+    });
+
+    // the scenario ends when:
+    auto endScenario =
+        // - disable is executed
+        from(observable(disable))
+        .select([](RoutedEventPattern)
+    {
+        return true;
+    }).merge(
+        // - the scenario is navigated from
+        from(observable(navigated))
+        .where([](bool n)
+    {
+        return !n;
+    }));
+
+    // enable the scenario when enable is executed
     from(observable(enable))
         // stay on the ui thread
-        .subscribe(
-        [this](RoutedEventPattern)
+        .where([this](RoutedEventPattern)
+    {
+        if (!accelerometer)
         {
-            if (accelerometer != nullptr)
-            {
-                typedef TypedEventHandler<Accelerometer^, AccelerometerShakenEventArgs^> AccelerometerShakenTypedEventHandler;
-                auto shaken = rxrt::FromEventPattern<AccelerometerShakenTypedEventHandler>(
-                    [this](AccelerometerShakenTypedEventHandler^ h)
-                {
-                    return this->accelerometer->Shaken += h;
-                },
-                    [this](Windows::Foundation::EventRegistrationToken t)
-                {
-                    this->accelerometer->Shaken -= t;
-                });
+            rootPage->NotifyUser("No accelerometer found", NotifyType::ErrorMessage);
+            return false;
+        }
 
-                auto currentWindow = Window::Current;
-                auto visibilityChanged = rxrt::FromEventPattern<WindowVisibilityChangedEventHandler, VisibilityChangedEventArgs>(
-                    [currentWindow](WindowVisibilityChangedEventHandler^ h)
-                {
-                    return currentWindow->VisibilityChanged += h;
-                },
-                    [currentWindow](Windows::Foundation::EventRegistrationToken t)
-                {
-                    currentWindow->VisibilityChanged -= t;
-                });
-
-                ///
-                /// allow subscription to be called from multiple points
-                ///
-                auto subscribeShaken =
-                    [this, shaken]()
-                {
-                    this->shakenSubscription.Dispose();
-                    this->shakenSubscription = rx::from(shaken)
-                        .select([this](rxrt::EventPattern<Accelerometer^, AccelerometerShakenEventArgs^> e)
-                    {
-                        // on the sensor thread
-                        return ++this->shakeCounter;
-                    })
-                        .observe_on_dispatcher()
-                        .subscribe([this](uint16 value)
-                    {
-                        // on the ui thread
-                        this->ScenarioOutputText->Text = value.ToString();
-                    }
-                    );
-                };
-                // initial subscribe
-                subscribeShaken();
-
-                /// This is the event handler for VisibilityChanged events. You would register for these notifications
-                /// if handling sensor data when the app is not visible could cause unintended actions in the app.
-                this->visibilitySubscription = rx::from(visibilityChanged)
-                    .subscribe(
-                    [this, subscribeShaken](rxrt::EventPattern<Platform::Object^, VisibilityChangedEventArgs^> e)
-                {
-                    // The app should watch for VisibilityChanged events to disable and re-enable sensor input as appropriate
-                    if (ScenarioDisableButton->IsEnabled)
-                    {
-                        if (e.EventArgs()->Visible)
-                        {
-                            // Re-enable sensor input (no need to restore the desired reportInterval... it is restored for us upon app resume)
-                            subscribeShaken();
-                        }
-                        else
-                        {
-                            // Disable sensor input (no need to restore the default reportInterval... resources will be released upon app suspension)
-                            this->shakenSubscription.Dispose();
-                        }
-                    }
-                });
-            }
-            else
-            {
-                rootPage->NotifyUser("No accelerometer found", NotifyType::ErrorMessage);
-            }
-        });
+        return true;
+    })
+        .select_many([=](RoutedEventPattern)
+    {
+        return from(visible)
+            .select_many([=](bool)
+        {
+            // enable sensor input 
+            return rx::from(shaken)
+                .take_until(invisible);
+        })
+            .take_until(endScenario);
+    })
+        .subscribe([this](uint16 value)
+    {
+        // on the ui thread
+        this->ScenarioOutputText->Text = value.ToString();
+    });
 
     rxrt::BindCommand(ScenarioEnableButton, enable);
-
-    from(observable(disable))
-        // stay on the ui thread
-        .subscribe([this](RoutedEventPattern)
-        {
-            shakenSubscription.Dispose();
-            visibilitySubscription.Dispose();
-        });
 
     rxrt::BindCommand(ScenarioDisableButton, disable);
 
@@ -160,11 +169,20 @@ Scenario2::Scenario2() :
 }
 
 /// <summary>
+/// Invoked when this page is about to be displayed in a Frame.
+/// </summary>
+/// <param name="e">Event data that describes how this page was reached.  The Parameter
+/// property is typically used to configure the page.</param>
+void Scenario2::OnNavigatedTo(NavigationEventArgs^)
+{
+    navigated->OnNext(true);
+}
+
+/// <summary>
 /// Invoked when this page is no longer displayed.
 /// </summary>
 /// <param name="e"></param>
-void Scenario2::OnNavigatedFrom(NavigationEventArgs^ e)
+void Scenario2::OnNavigatedFrom(NavigationEventArgs^)
 {
-    shakenSubscription.Dispose();
-    visibilitySubscription.Dispose();
+    navigated->OnNext(false);
 }

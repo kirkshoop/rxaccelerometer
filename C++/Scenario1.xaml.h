@@ -31,19 +31,19 @@ namespace SDKSample
         {
         public:
             Scenario1();
-    
+
         protected:
-            virtual void OnNavigatedFrom(Windows::UI::Xaml::Navigation::NavigationEventArgs^ e) override;
-    
+            virtual void OnNavigatedTo(Windows::UI::Xaml::Navigation::NavigationEventArgs^) override;
+            virtual void OnNavigatedFrom(Windows::UI::Xaml::Navigation::NavigationEventArgs^) override;
+
         private:
             typedef rxrt::EventPattern<Object^, Windows::UI::Xaml::RoutedEventArgs^> RoutedEventPattern;
 
             MainPage^ rootPage;
             Windows::Devices::Sensors::Accelerometer^ accelerometer;
+            std::shared_ptr<rx::BehaviorSubject<bool>> navigated;
             rxrt::ReactiveCommand<RoutedEventPattern>::shared enable;
             rxrt::ReactiveCommand<RoutedEventPattern>::shared disable;
-            rx::Disposable readingSubscription;
-			rx::Disposable visibilitySubscription;
             uint32 desiredReportInterval;
         };
     }

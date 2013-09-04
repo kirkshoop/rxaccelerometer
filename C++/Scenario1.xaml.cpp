@@ -28,9 +28,8 @@ using namespace Platform;
 
 Scenario1::Scenario1() : 
     rootPage(MainPage::Current), 
-    desiredReportInterval(0), 
-    readingSubscription(rx::Disposable::Empty()), 
-    visibilitySubscription(rx::Disposable::Empty())
+    navigated(std::make_shared < rx::BehaviorSubject < bool >> (true)),
+    desiredReportInterval(0)
 {
     InitializeComponent();
 
@@ -39,24 +38,37 @@ Scenario1::Scenario1() :
     auto working = std::make_shared<rx::BehaviorSubject<bool>>(false);
 
     // use !enabled and !working to control canExecute
-    enable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled).combine_latest([](bool e, bool w){
-        return !e && !w; }, working)));
+    enable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled)
+        .combine_latest([](bool e, bool w)
+        {
+            return !e && !w; 
+        }, working)));
     // use enabled and !working to control canExecute
-    disable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled).combine_latest([](bool e, bool w){
-        return e && !w; }, working)));
+    disable = std::make_shared < rxrt::ReactiveCommand < RoutedEventPattern> >(observable(from(enabled)
+        .combine_latest([](bool e, bool w)
+        {
+            return e && !w; 
+        }, working)));
 
     // when enable or disable is executing mark as working (both commands should be disabled)
     observable(from(enable->IsExecuting())
-        .combine_latest([](bool ew, bool dw){
-            return ew || dw; }, disable->IsExecuting()))
+        .combine_latest([](bool ew, bool dw)
+        {
+            return ew || dw; 
+        }, disable->IsExecuting()))
         ->Subscribe(observer(working));
 
     // when enable is executed mark the scenario enabled, when disable is executed mark the scenario disabled
     observable(from(observable(enable))
-        .select([](RoutedEventPattern){
-            return true; })
-        .merge(observable(from(observable(disable)).select([](RoutedEventPattern){
-            return false; }))))
+        .select([](RoutedEventPattern)
+        {
+            return true; 
+        })
+        .merge(observable(from(observable(disable))
+            .select([](RoutedEventPattern)
+            {
+                return false; 
+            }))))
         ->Subscribe(observer(enabled));
 
     // if there is something to do on a background thread
@@ -64,113 +76,122 @@ Scenario1::Scenario1() :
         [this](RoutedEventPattern ep)
         {
             // background thread
-            //...
+
             // enable and disable commands should be disabled until this is finished
             std::this_thread::sleep_for(std::chrono::seconds(2));
             return ep; // or something else
         }))
-        // back on the ui thread
         .subscribe(
         [this](RoutedEventPattern) // take whatever was returned above
         {
-            //...
+            // back on the ui thread
         });
 
+    typedef TypedEventHandler<Accelerometer^, AccelerometerReadingChangedEventArgs^> AccelerometerReadingChangedTypedEventHandler;
+    auto readingChanged = from(rxrt::FromEventPattern<AccelerometerReadingChangedTypedEventHandler>(
+        [this](AccelerometerReadingChangedTypedEventHandler^ h)
+        {
+            return this->accelerometer->ReadingChanged += h;
+        },
+        [this](Windows::Foundation::EventRegistrationToken t)
+        {
+            this->accelerometer->ReadingChanged -= t;
+        }))
+        .select([](rxrt::EventPattern<Accelerometer^, AccelerometerReadingChangedEventArgs^> e)
+        {
+            // on sensor thread
+            return e.EventArgs()->Reading;
+        })
+        // push readings to ui thread
+        .observe_on_dispatcher()
+        .publish()
+        .ref_count();
+
+    auto currentWindow = Window::Current;
+    auto visiblityChanged = from(rxrt::FromEventPattern<WindowVisibilityChangedEventHandler, VisibilityChangedEventArgs>(
+        [currentWindow](WindowVisibilityChangedEventHandler^ h)
+        {
+            return currentWindow->VisibilityChanged += h;
+        },
+        [currentWindow](Windows::Foundation::EventRegistrationToken t)
+        {
+            currentWindow->VisibilityChanged -= t;
+        }))
+        .select([](rxrt::EventPattern<Platform::Object^, VisibilityChangedEventArgs^> e)
+        {
+            return e.EventArgs()->Visible;
+        })
+        .publish()
+        .ref_count();
+
+    auto visible = from(visiblityChanged)
+        .where([](bool v)
+        {
+            return !!v;
+        }).merge(
+        from(observable(navigated))
+            .where([](bool n)
+            {
+                return n;
+            }));
+
+    auto invisible = from(visiblityChanged)
+        .where([](bool v)
+        {
+            return !v;
+        });
+
+    // the scenario ends when:
+    auto endScenario = 
+        // - disable is executed
+        from(observable(disable))
+            .select([](RoutedEventPattern)
+            {
+                return true; 
+            }).merge(
+        // - the scenario is navigated from
+        from(observable(navigated))
+            .where([](bool n)
+            {
+                return !n; 
+            }));
+
+    // enable the scenario when enable is executed
     from(observable(enable))
         // stay on the ui thread
-        .subscribe(
-        [this](RoutedEventPattern)
+        .where([this](RoutedEventPattern)
         {
-            if (accelerometer != nullptr)
-            {
-                // Establish the report interval
-                accelerometer->ReportInterval = desiredReportInterval;
-
-                typedef TypedEventHandler<Accelerometer^, AccelerometerReadingChangedEventArgs^> AccelerometerReadingChangedTypedEventHandler;
-                auto readingChanged = rxrt::FromEventPattern<AccelerometerReadingChangedTypedEventHandler>(
-                    [this](AccelerometerReadingChangedTypedEventHandler^ h)
-                {
-                    return this->accelerometer->ReadingChanged += h;
-                },
-                    [this](Windows::Foundation::EventRegistrationToken t)
-                {
-                    this->accelerometer->ReadingChanged -= t;
-                });
-
-                auto currentWindow = Window::Current;
-                auto visibilityChanged = rxrt::FromEventPattern<WindowVisibilityChangedEventHandler, VisibilityChangedEventArgs>(
-                    [currentWindow](WindowVisibilityChangedEventHandler^ h)
-                {
-                    return currentWindow->VisibilityChanged += h;
-                },
-                    [currentWindow](Windows::Foundation::EventRegistrationToken t)
-                {
-                    currentWindow->VisibilityChanged -= t;
-                });
-
-                ///
-                /// allow subscription to readings to be called from multiple points
-                ///
-                auto subscribeReadings =
-                    [this, readingChanged]()
-                {
-                    this->readingSubscription.Dispose();
-                    this->readingSubscription = rx::from(readingChanged)
-                        .select([this](rxrt::EventPattern<Accelerometer^, AccelerometerReadingChangedEventArgs^> e)
-                    {
-                        // on the sensor thread
-                        return e.EventArgs()->Reading;
-                    })
-                        .observe_on_dispatcher()
-                        .subscribe([this](AccelerometerReading^ reading)
-                    {
-                        // on the ui thread
-                        this->ScenarioOutput_X->Text = reading->AccelerationX.ToString();
-                        this->ScenarioOutput_Y->Text = reading->AccelerationY.ToString();
-                        this->ScenarioOutput_Z->Text = reading->AccelerationZ.ToString();
-                    }
-                    );
-                };
-                // initial subscribe
-                subscribeReadings();
-
-                /// This is the event handler for VisibilityChanged events. You would register for these notifications
-                /// if handling sensor data when the app is not visible could cause unintended actions in the app.
-                this->visibilitySubscription = rx::from(visibilityChanged)
-                    .subscribe(
-                    [this, subscribeReadings](rxrt::EventPattern<Platform::Object^, VisibilityChangedEventArgs^> e)
-                {
-                    // The app should watch for VisibilityChanged events to disable and re-enable sensor input as appropriate
-                    if (ScenarioDisableButton->IsEnabled)
-                    {
-                        if (e.EventArgs()->Visible)
-                        {
-                            // Re-enable sensor input (no need to restore the desired reportInterval... it is restored for us upon app resume)
-                            subscribeReadings();
-                        }
-                        else
-                        {
-                            // Disable sensor input (no need to restore the default reportInterval... resources will be released upon app suspension)
-                            this->readingSubscription.Dispose();
-                        }
-                    }
-                });
-            }
-            else
+            if (!accelerometer)
             {
                 rootPage->NotifyUser("No accelerometer found", NotifyType::ErrorMessage);
+                return false;
             }
+
+            // Establish the report interval
+            accelerometer->ReportInterval = desiredReportInterval;
+
+            return true;
+        })
+        .select_many([=](RoutedEventPattern)
+        {
+            return from(visible)
+                .select_many([=](bool)
+                {
+                    // enable sensor input 
+                    return rx::from(readingChanged)
+                        .take_until(invisible);
+                })
+                .take_until(endScenario);
+        })
+        .subscribe([this](AccelerometerReading^ reading)
+        {
+            // on the ui thread
+            this->ScenarioOutput_X->Text = reading->AccelerationX.ToString();
+            this->ScenarioOutput_Y->Text = reading->AccelerationY.ToString();
+            this->ScenarioOutput_Z->Text = reading->AccelerationZ.ToString();
         });
 
     rxrt::BindCommand(ScenarioEnableButton, enable);
-    
-    from(observable(disable))
-        // stay on the ui thread
-        .subscribe([this](RoutedEventPattern)
-        {
-            readingSubscription.Dispose();
-            visibilitySubscription.Dispose();
-        });
 
     rxrt::BindCommand(ScenarioDisableButton, disable);
 
@@ -189,12 +210,20 @@ Scenario1::Scenario1() :
 }
 
 /// <summary>
+/// Invoked when this page is about to be displayed in a Frame.
+/// </summary>
+/// <param name="e">Event data that describes how this page was reached.  The Parameter
+/// property is typically used to configure the page.</param>
+void Scenario1::OnNavigatedTo(NavigationEventArgs^)
+{
+    navigated->OnNext(true);
+}
+
+/// <summary>
 /// Invoked when this page is no longer displayed.
 /// </summary>
 /// <param name="e"></param>
-void Scenario1::OnNavigatedFrom(NavigationEventArgs^ e)
+void Scenario1::OnNavigatedFrom(NavigationEventArgs^)
 {
-    readingSubscription.Dispose();
-    visibilitySubscription.Dispose();
+    navigated->OnNext(false);
 }
-
