@@ -19,10 +19,14 @@ namespace rxcpp { namespace winrt {
     template <class TSender, class TEventArgs>
     struct EventPattern
     {
+        EventPattern()
+        {
+        }
         EventPattern(TSender sender, TEventArgs eventargs) :
             sender(sender),
             eventargs(eventargs)
-        {}
+        {
+        }
 
         TSender Sender() const {
             return sender;};
@@ -229,7 +233,6 @@ namespace rxcpp { namespace winrt {
             cd.Add(Disposable(
                 [observer, dispatcherTimer](){
                     dispatcherTimer->Stop();
-                    observer->OnCompleted();
                 }));
 
             dispatcherTimer->Start();
