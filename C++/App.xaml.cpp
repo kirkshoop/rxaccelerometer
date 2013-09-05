@@ -40,8 +40,6 @@ App::App()
 {
     InitializeComponent();
 
-    //this->Suspending += ref new SuspendingEventHandler(this, &SDKSample::App::OnSuspending);
-
     auto suspending = rxrt::FromEventPattern<SuspendingEventHandler, SuspendingEventArgs>(
         [this](SuspendingEventHandler^ h)
         {
@@ -58,10 +56,12 @@ App::App()
         .chain<rxrt::defer_operation>(
         [](SuspendingEventPattern ep)
         {
+            // defer this operation
             return ep.EventArgs()->SuspendingOperation;
         },
         [](rxrt::OperationPattern<SuspendingOperation^>, SuspendingEventPattern)
         {
+            // do this while the operation is deferred
             return SuspensionManager::ReactiveSave();
         },
         ct)
