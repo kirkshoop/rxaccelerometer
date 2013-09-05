@@ -35,6 +35,7 @@ Scenario1::Scenario1() :
 
     // start out disabled
     auto enabled = std::make_shared<rx::BehaviorSubject<bool>>(false);
+    // start out not-working
     auto working = std::make_shared<rx::BehaviorSubject<bool>>(false);
 
     // use !enabled and !working to control canExecute
@@ -60,32 +61,16 @@ Scenario1::Scenario1() :
 
     // when enable is executed mark the scenario enabled, when disable is executed mark the scenario disabled
     observable(from(observable(enable))
-        .select([](RoutedEventPattern)
+        .select([this](RoutedEventPattern)
         {
-            return true; 
+            return accelerometer != nullptr; 
         })
         .merge(observable(from(observable(disable))
             .select([](RoutedEventPattern)
             {
                 return false; 
             }))))
-        ->Subscribe(observer(enabled));
-
-    // if there is something to do on a background thread
-    from(enable->RegisterAsyncFunction(
-        [this](RoutedEventPattern ep)
-        {
-            // background thread
-
-            // enable and disable commands should be disabled until this is finished
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            return ep; // or something else
-        }))
-        .subscribe(
-        [this](RoutedEventPattern) // take whatever was returned above
-        {
-            // back on the ui thread
-        });
+        ->Subscribe(observer(enabled)); // this is a subscription to the enable and disable ReactiveCommands
 
     typedef TypedEventHandler<Accelerometer^, AccelerometerReadingChangedEventArgs^> AccelerometerReadingChangedTypedEventHandler;
     auto readingChanged = from(rxrt::FromEventPattern<AccelerometerReadingChangedTypedEventHandler>(
@@ -156,21 +141,27 @@ Scenario1::Scenario1() :
                 return !n; 
             }));
 
-    // enable the scenario when enable is executed
-    from(observable(enable))
-        // stay on the ui thread
-        .where([this](RoutedEventPattern)
+    from(enable->RegisterAsyncFunction(
+        [](RoutedEventPattern)
         {
-            if (!accelerometer)
-            {
-                rootPage->NotifyUser("No accelerometer found", NotifyType::ErrorMessage);
-                return false;
-            }
+            // background thread
+            // enable and disable commands will be disabled until this is finished
 
-            // Establish the report interval
-            accelerometer->ReportInterval = desiredReportInterval;
+            std::this_thread::sleep_for(std::chrono::seconds(2));
 
             return true;
+        })) // this is a subscription to the enable ReactiveCommand
+        // back on the ui thread
+        .subscribe([this](bool) // takes whatever was returned above
+        {
+            // update the ui
+        });
+
+    // enable the scenario when enable is executed
+    from(observable(enable))
+        .where([this](RoutedEventPattern)
+        {
+            return accelerometer != nullptr;
         })
         .select_many([=](RoutedEventPattern)
         {
@@ -181,7 +172,7 @@ Scenario1::Scenario1() :
                     return rx::from(readingChanged)
                         .take_until(invisible);
                 })
-                .take_until(endScenario);
+                .take_until(endScenario); // this is a subscription to the disable ReactiveCommand
         })
         .subscribe([this](AccelerometerReading^ reading)
         {
@@ -202,6 +193,9 @@ Scenario1::Scenario1() :
         // This value will be used later to activate the sensor.
         uint32 minReportInterval = accelerometer->MinimumReportInterval;
         desiredReportInterval = minReportInterval > 16 ? minReportInterval : 16;
+
+        // Establish the report interval
+        accelerometer->ReportInterval = desiredReportInterval;
     }
     else
     {
