@@ -52,8 +52,8 @@ Scenario2::Scenario2() :
 
     // when enable is executed mark the scenario enabled, when disable is executed mark the scenario disabled
     observable(from(observable(enable))
-        .select([](RoutedEventPattern){
-            return true; })
+        .select([this](RoutedEventPattern){
+            return accelerometer != nullptr; })
         .merge(observable(from(observable(disable)).select([](RoutedEventPattern){
             return false; }))))
         ->Subscribe(observer(enabled));
@@ -97,65 +97,59 @@ Scenario2::Scenario2() :
 
     auto visible = from(visiblityChanged)
         .where([](bool v)
-    {
-        return !!v;
-    }).merge(
-        from(observable(navigated))
-        .where([](bool n)
-    {
-        return n;
-    }));
+        {
+            return !!v;
+        }).merge(
+            from(observable(navigated))
+            .where([](bool n)
+            {
+                return n;
+            }));
 
     auto invisible = from(visiblityChanged)
         .where([](bool v)
-    {
-        return !v;
-    });
+        {
+            return !v;
+        });
 
     // the scenario ends when:
     auto endScenario =
         // - disable is executed
         from(observable(disable))
         .select([](RoutedEventPattern)
-    {
-        return true;
-    }).merge(
-        // - the scenario is navigated from
-        from(observable(navigated))
-        .where([](bool n)
-    {
-        return !n;
-    }));
+        {
+            return true;
+        }).merge(
+            // - the scenario is navigated from
+            from(observable(navigated))
+            .where([](bool n)
+            {
+                return !n;
+            }));
 
     // enable the scenario when enable is executed
     from(observable(enable))
         // stay on the ui thread
         .where([this](RoutedEventPattern)
-    {
-        if (!accelerometer)
         {
-            rootPage->NotifyUser("No accelerometer found", NotifyType::ErrorMessage);
-            return false;
-        }
-
-        return true;
-    })
-        .select_many([=](RoutedEventPattern)
-    {
-        return from(visible)
-            .select_many([=](bool)
-        {
-            // enable sensor input 
-            return rx::from(shaken)
-                .take_until(invisible);
+            return accelerometer != nullptr;
         })
-            .take_until(endScenario);
-    })
+        .select_many([=](RoutedEventPattern)
+        {
+            return from(visible)
+                .select_many([=](bool)
+                {
+                    // enable sensor input 
+                    return rx::from(shaken)
+                        .take_until(invisible);
+                })
+                .take_until(endScenario);
+        })
         .subscribe([this](uint16 value)
-    {
-        // on the ui thread
-        this->ScenarioOutputText->Text = value.ToString();
-    });
+        {
+            // on the ui thread
+            this->ScenarioOutputText->Text = value.ToString();
+        });
 
     rxrt::BindCommand(ScenarioEnableButton, enable);
 
