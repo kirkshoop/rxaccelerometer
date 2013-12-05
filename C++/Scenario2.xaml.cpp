@@ -53,7 +53,7 @@ Scenario2::Scenario2() :
     // when enable is executed mark the scenario enabled, when disable is executed mark the scenario disabled
     observable(from(observable(enable))
         .select([this](RoutedEventPattern){
-            return accelerometer != nullptr; })
+            return this->accelerometer != nullptr; })
         .merge(observable(from(observable(disable)).select([](RoutedEventPattern){
             return false; }))))
         ->Subscribe(observer(enabled));
@@ -132,7 +132,7 @@ Scenario2::Scenario2() :
         // stay on the ui thread
         .where([this](RoutedEventPattern)
         {
-            return accelerometer != nullptr;
+            return this->accelerometer != nullptr;
         })
         .select_many([=](RoutedEventPattern)
         {

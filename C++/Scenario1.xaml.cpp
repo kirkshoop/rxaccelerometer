@@ -63,7 +63,7 @@ Scenario1::Scenario1() :
     observable(from(observable(enable))
         .select([this](RoutedEventPattern)
         {
-            return accelerometer != nullptr; 
+            return this->accelerometer != nullptr; 
         })
         .merge(observable(from(observable(disable))
             .select([](RoutedEventPattern)
@@ -161,7 +161,7 @@ Scenario1::Scenario1() :
     from(observable(enable))
         .where([this](RoutedEventPattern)
         {
-            return accelerometer != nullptr;
+            return this->accelerometer != nullptr;
         })
         .select_many([=](RoutedEventPattern)
         {
