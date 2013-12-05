@@ -19,14 +19,10 @@ namespace rxcpp { namespace winrt {
     template <class TSender, class TEventArgs>
     struct EventPattern
     {
-        EventPattern()
-        {
-        }
         EventPattern(TSender sender, TEventArgs eventargs) :
             sender(sender),
             eventargs(eventargs)
-        {
-        }
+        {}
 
         TSender Sender() const {
             return sender;};
@@ -233,6 +229,7 @@ namespace rxcpp { namespace winrt {
             cd.Add(Disposable(
                 [observer, dispatcherTimer](){
                     dispatcherTimer->Stop();
+                    observer->OnCompleted();
                 }));
 
             dispatcherTimer->Start();
@@ -406,19 +403,19 @@ namespace rxcpp { namespace winrt {
                 // select collection
                 [=](T t)
                 {
-                    std::unique_lock<std::mutex> guard(flight_lock);
-                    inflight->OnNext(true);
+                    std::unique_lock<std::mutex> guard(this->flight_lock);
+                    this->inflight->OnNext(true);
                     return Using(
                     // resource factory
                     [=]() -> SerialDisposable
                     {
                         SerialDisposable flight;
                         flight.Set(ScheduledDisposable(
-                            defaultScheduler,
+                            this->defaultScheduler,
                             Disposable([=]()
                             {
-                                std::unique_lock<std::mutex> guard(flight_lock);
-                                inflight->OnNext(false);
+                                std::unique_lock<std::mutex> guard(this->flight_lock);
+                                this->inflight->OnNext(false);
                             })));
                         return flight;
                     },
@@ -473,7 +470,7 @@ namespace rxcpp { namespace winrt {
                     }
                     catch (...)
                     {
-                        exceptions->OnError(std::current_exception());
+                        this->exceptions->OnError(std::current_exception());
                     }
                 },
                 //on completed
@@ -484,7 +481,7 @@ namespace rxcpp { namespace winrt {
                     }
                     catch (...)
                     {
-                        exceptions->OnError(std::current_exception());
+                        this->exceptions->OnError(std::current_exception());
                     }
                 },
                 //on error
@@ -495,7 +492,7 @@ namespace rxcpp { namespace winrt {
                     }
                     catch (...)
                     {
-                        exceptions->OnError(std::current_exception());
+                        this->exceptions->OnError(std::current_exception());
                     }
                 });
         }

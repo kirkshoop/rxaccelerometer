@@ -10,6 +10,11 @@
 #undef min
 #undef max
 
+#include <stdlib.h>
+
+#include <iostream>
+#include <iomanip>
+
 #include <exception>
 #include <functional>
 #include <memory>

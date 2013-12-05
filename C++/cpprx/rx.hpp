@@ -123,10 +123,43 @@ namespace detail {
         }
     };
 
+    template<class Base, class T, class Obj>
+    class BinderMaterialized : public Base
+    {
+    protected:
+        typedef typename Base::item_type item_type;
+        using Base::obj;
+    public:
+        BinderMaterialized(Obj obj) : Base(std::move(obj))
+        {
+        }
+    };
+
+    template<class Base, class T, class M>
+    class BinderMaterialized<Base, T, std::shared_ptr<Observable<std::shared_ptr<Notification<M>>>>> : public Base
+    {
+    protected:
+        typedef typename Base::item_type item_type;
+        using Base::obj;
+    public:
+        BinderMaterialized(std::shared_ptr<Observable<std::shared_ptr<Notification<M>>>> obj) : Base(std::move(obj))
+        {
+        }
+
+        auto dematerialize()
+            -> decltype(from(Dematerialize(observable(obj)))) {
+                return  from(Dematerialize(observable(obj)));
+        }
+    };
+
     template<class Obj>
     class Binder : public BinderNested<
         BinderConnectable<
-            BinderBase<typename observable_item<Obj>::type, Obj>,
+            BinderMaterialized<
+                BinderBase<typename observable_item<Obj>::type, Obj>,
+                typename observable_item<Obj>::type, 
+                Obj
+            >,
             typename observable_item<Obj>::type,
             Obj
         >,
@@ -136,7 +169,11 @@ namespace detail {
     {
         typedef BinderNested<
         BinderConnectable<
-            BinderBase<typename observable_item<Obj>::type, Obj>,
+            BinderMaterialized<
+                BinderBase<typename observable_item<Obj>::type, Obj>,
+                typename observable_item<Obj>::type, 
+                Obj
+            >,
             typename observable_item<Obj>::type,
             Obj
         >,
@@ -283,6 +320,11 @@ namespace detail {
             -> decltype(from(Scan<item_type>(obj, seed, accumulator))) {
             return      from(Scan<item_type>(obj, seed, accumulator));
         }
+        template <class A>
+        auto scan(A accumulator) 
+            -> decltype(from(Scan<item_type>(obj, accumulator))) {
+            return      from(Scan<item_type>(obj, accumulator));
+        }
         template <class Integral>
         auto take(Integral n) 
             -> decltype(from(Take<item_type>(obj, n))) {
@@ -338,6 +380,10 @@ namespace detail {
             -> decltype(from(ToStdCollection<std::list<item_type>>(obj))) {
             return      from(ToStdCollection<std::list<item_type>>(obj));
         }
+        auto materialize()
+            -> decltype(from(Materialize(observable(obj)))) {
+                return  from(Materialize(observable(obj)));
+        }
         auto delay(Scheduler::clock::duration due, Scheduler::shared scheduler) -> decltype(from(Delay<item_type>(obj, due, scheduler))) {
             return from(Delay<item_type>(obj, due, scheduler));
         }
@@ -365,7 +411,7 @@ namespace detail {
         auto observe_on_dispatcher()
             -> decltype(from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current()))))
         {
-            return		from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current())));
+            return      from(ObserveOnObserver<item_type>(obj, std::static_pointer_cast<Scheduler>(winrt::CoreDispatcherScheduler::Current())));
         }
 #else
         auto on_dispatcher()
@@ -517,6 +563,10 @@ namespace detail {
     template<class K, class T>
     Binder<std::shared_ptr<GroupedObservable<K, T>>> from(std::shared_ptr<GroupedSubject<K, T>> obj) {
         return Binder<std::shared_ptr<GroupedObservable<K, T>>>(std::move(obj)); }
+
+    template<class T>
+    Binder<std::shared_ptr<TestableObservable<T>>> from(std::shared_ptr<TestableObservable<T>> obj) {
+        return Binder<std::shared_ptr<TestableObservable<T>>>(std::move(obj)); }
 
     template<class Obj>
     Binder<Obj> from(Binder<Obj> binder) { 
