@@ -195,7 +195,11 @@
     <Image Include="Assets\tile-sdk.png" />
     <Image Include="Assets\windows-sdk.png" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="packages\rxcpp.1.0.2\build\native\rxcpp.targets" Condition="Exists('packages\rxcpp.1.0.2\build\native\rxcpp.targets')" />
   </ImportGroup>
 </Project>
